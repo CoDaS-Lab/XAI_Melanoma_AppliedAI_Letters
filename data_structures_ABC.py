@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 """
+Created on Tue Jan 11 00:04:01 2022
+
 @author: Harshit Bokadia
 
 """
-# Color Threshold = 15
-# Border threshold= 6
+# Color Threshold = 10
+# Border threshold= 13
 
 import torch
 import torch.nn.functional as F
 
 from PIL import Image
-from CaptumVisual import visualize_image_attr_new
+
 
 import os
 import json
@@ -22,13 +24,6 @@ import torchvision
 from torchvision import models
 from torchvision import transforms
 
-from captum.attr import IntegratedGradients
-from captum.attr import GradientShap
-from captum.attr import Occlusion
-from captum.attr import NoiseTunnel
-from captum.attr import visualization as viz
-
-
 import matplotlib
 from scipy.linalg import eigh 
 from sklearn.decomposition import PCA
@@ -39,7 +34,7 @@ import cv2
 import csv
 import math
 import random
-# import imutils
+
 import torchvision.utils as utils
 import argparse
 from torch.utils.tensorboard import SummaryWriter
@@ -47,7 +42,6 @@ from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as torch_transforms
 from networks_new import AttnVGG, VGG
 from loss import FocalLoss
-#from data import preprocess_data_2016, preprocess_data_2017, ISIC
 from data import *
 from utilities import *
 from transforms import *
@@ -59,33 +53,24 @@ import math
 np.random.seed(1110)
 torch.manual_seed(1110)
 
+import glob
+
+rootdir =  'C:/Users\harsh\Desktop\HBK008\CoDaS Lab\Project XAI\data_2016\Train'
+images_benign = [cv2.imread(file) for file in glob.glob(os.path.join(rootdir, 'benign', '*.jpg'))]
+images_malignant = [cv2.imread(file) for file in glob.glob(os.path.join(rootdir, 'malignant', '*.jpg'))]
+
+data_images = images_benign + images_malignant
+
+
+rootdir_lesion =  'C:/Users\harsh\Desktop\HBK008\CoDaS Lab\Project XAI\data_2016\Train_Lesion'
+images_benign_lesion = [cv2.imread(file) for file in glob.glob(os.path.join(rootdir_lesion, 'benign', '*.png'))]
+images_malignant_lesion = [cv2.imread(file) for file in glob.glob(os.path.join(rootdir_lesion, 'malignant', '*.png'))]
+
+data_images_lesion = images_benign_lesion + images_malignant_lesion
+
 data = torch.load('extract_train_final_new.pt', map_location ='cpu')
-data_color =  torch.load('extract_train_color.pt', map_location ='cpu')
-#SaliencyMaps = torch.load('saliency_maps.pt', map_location ='cpu')
 
-images_extract = data['Images']
-
-II = []
-for i in range(len(images_extract)):
-    FF_temp = np.array(images_extract[i].cpu())
-    II.append(FF_temp)
-
-II = np.vstack(II)
-
-II = torch.Tensor(II)
-
-
-#######color images load
-images_color = data_color['Images']
-
-II_color = []
-for i in range(len(images_color)):
-    FF_temp = np.array(images_color[i].cpu())
-    II_color.append(FF_temp)
-
-II_color = np.vstack(II_color)
-
-II_color = torch.Tensor(II_color)
+# data_old = torch.load('features_test_final.pt', map_location ='cpu')
 
 ###############
 dnn_probs = data['extract']
@@ -142,48 +127,57 @@ def plotMinMax(Xsub_rgb,labels=["R","G","B"]):
         ma = np.max(Xsub_rgb[:,:,i])
         print("{} : MIN={:8.4f}, MAX={:8.4f}".format(lab,mi,ma))  
         
+     
+        
+transformations = transforms.Compose([
+
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+
+]) 
+
 ##########################################################################        
         
-def AsymmetryScore(mn, II):
+def AsymmetryScore(mn, data_images):
     
-    I = II[mn, :, :, :].unsqueeze(0)
-    I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
-    IM = I_extract
-    IM_Original = I_extract.numpy()
-    IM_Original = np.moveaxis(IM_Original, 0, -1)
-    img=IM_Original[:, :, :]
-    
+    img = data_images_lesion[mn]
+    # I = II[mn, :, :, :].unsqueeze(0)
+    # I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
+    # IM = I_extract
+    # IM_Original = I_extract.numpy()
+    # IM_Original = np.moveaxis(IM_Original, 0, -1)
+    # img=IM_Original[:, :, :]
+    # RGB_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     # plt.figure()
-    # plt.imshow(img)
+    # plt.imshow(gray)
     # plt.axis('off')
     plt.imsave('OriginalImage.jpg',img)
         
     img = cv2.imread('OriginalImage.jpg')
     img=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(gray, 0, 255,cv2.THRESH_BINARY_INV +cv2.THRESH_OTSU)
-    kernel = np.ones((3, 3), np.uint8)
-    closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE,kernel, iterations = 15)
-    bg = cv2.dilate(closing, kernel, iterations = 1)
-    dist_transform = cv2.distanceTransform(closing, cv2.DIST_L2, 0)
-    ret, fg = cv2.threshold(dist_transform, 0.02*dist_transform.max(), 255, 0)
     
-    contours,hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours,hierarchy = cv2.findContours(gray.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     c = max(contours, key=cv2.contourArea)    
         
     # fit contour to ellipse and get ellipse center, minor and major diameters and angle in degree 
     ellipse = cv2.fitEllipse(c)
     (xc,yc),(d1,d2),angle = ellipse
-    print(xc,yc,d1,d1,angle)
-    
+    # print(xc,yc,d1,d1,angle)
+    ELP = [xc, yc, d1, d2, angle]
     # draw ellipse
     result = img.copy()
-    # cv2.ellipse(result, ellipse, (0, 255, 0), 3)
+    cv2.ellipse(result, ellipse, (0, 255, 0), 10)
     
     # draw circle at center
     xc, yc = ellipse[0]
-    cv2.circle(result, (int(xc),int(yc)), 10, (255, 255, 255), -1)
+    cv2.circle(result, (int(xc),int(yc)), 10, (100, 100, 100), -1)
+    
+    # plt.figure()
+    # plt.imshow(result)
+    
     
     # draw vertical line
     # compute major radius
@@ -192,12 +186,12 @@ def AsymmetryScore(mn, II):
         angle = angle - 90
     else:
         angle = angle + 90
-    print(angle)
+    # print(angle)
     xtop = xc + math.cos(math.radians(angle))*rmajor
     ytop = yc + math.sin(math.radians(angle))*rmajor
     xbot = xc + math.cos(math.radians(angle+180))*rmajor
     ybot = yc + math.sin(math.radians(angle+180))*rmajor
-    cv2.line(result, (int(xtop),int(ytop)), (int(xbot),int(ybot)), (255, 255, 255), 5)
+    cv2.line(result, (int(xtop),int(ytop)), (int(xbot),int(ybot)), (100, 100, 100), 15)
 
     
     angle_m = angle
@@ -207,13 +201,13 @@ def AsymmetryScore(mn, II):
         angle_m = angle_m - 90
     else:
         angle_m = angle_m + 90
-    print(angle_m)
+    # print(angle_m)
     
     xtop_m = xc + math.cos(math.radians(angle_m))*rminor
     ytop_m = yc + math.sin(math.radians(angle_m))*rminor
     xbot_m = xc + math.cos(math.radians(angle_m+180))*rminor
     ybot_m = yc + math.sin(math.radians(angle_m+180))*rminor
-    cv2.line(result, (int(xtop_m),int(ytop_m)), (int(xbot_m),int(ybot_m)), (255, 255, 255), 5)
+    cv2.line(result, (int(xtop_m),int(ytop_m)), (int(xbot_m),int(ybot_m)), (100, 100, 100), 15)
     
     cv2.imwrite("melanoma_ellipse.jpg", result)
     
@@ -230,15 +224,15 @@ def AsymmetryScore(mn, II):
     
     center = (xc, yc)
     
-    img_asym = fg.copy()
-    print(img_asym.shape)
+    img_asym = gray.copy()
+    # print(img_asym.shape)
     
     height = img_asym.shape[0]
     width = img_asym.shape[1]
     
     # using cv2.getRotationMatrix2D() to get the rotation matrix
     
-    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=50, scale=1)
+    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=angle, scale=1)
     # rotate the image using cv2.warpAffine
     rotated_image = cv2.warpAffine(src=img_asym, M=rotate_matrix, dsize=(width, height))
     
@@ -261,20 +255,20 @@ def AsymmetryScore(mn, II):
     img_as = color.rgb2gray(img_as)
     
     
-    if 2*int(xc)<224:
+    if 2*int(xc)<img_as.shape[1]:
         
-        diff = 224-(2*int(xc))
-        padding_matrix = np.zeros([224, int(diff)])
+        diff = img_as.shape[1]-(2*int(xc))
+        padding_matrix = np.zeros([img_as.shape[0], int(diff)])
         s1 = img_as[:, :int(xc)]
         s1 = np.concatenate((padding_matrix, s1), axis=1)
-        s2 = img_as[:, int(xc):224]
+        s2 = img_as[:, int(xc):img_as.shape[1]]
         
     else:
 
-        diff = 2*int(xc)-224
-        padding_matrix = np.zeros([224, int(diff)])
+        diff = 2*int(xc)-img_as.shape[1]
+        padding_matrix = np.zeros([img_as.shape[0], int(diff)])
         s1 = img_as[:, :int(xc)]
-        s2 = img_as[:, int(xc):224]
+        s2 = img_as[:, int(xc):img_as.shape[1]]
         s2 = np.concatenate((s2, padding_matrix), axis=1)
     
     # plt.figure()
@@ -286,10 +280,10 @@ def AsymmetryScore(mn, II):
     # plt.axis('off')
     
     
-    s1[s1 > 0] = 1
-    s2[s2 > 0] = 10
+    s1[s1 > 0] = 1 # Left
+    s2[s2 > 0] = 10 # Right
     
-    s7 = cv2.flip(s2, 1)
+    s7 = cv2.flip(s2, 1) # Right one flipped
     
     # plt.figure()
     # plt.imshow(s7)
@@ -299,9 +293,9 @@ def AsymmetryScore(mn, II):
     
     overlap_new_hz = s1+s7
 
-    overlap_new_hz[overlap_new_hz == 11] = 0
-    overlap_new_hz[overlap_new_hz == 10] = 0
-    overlap_new_hz[overlap_new_hz == 1] = 255
+    overlap_new_hz[overlap_new_hz == 11] = 0 # overlap of both half
+    overlap_new_hz[overlap_new_hz == 10] = 0 # pixels of right half
+    overlap_new_hz[overlap_new_hz == 1] = 255 # pixels of left half
 
     # plt.figure()
     # plt.imshow(overlap_new_hz)
@@ -332,17 +326,17 @@ def AsymmetryScore(mn, II):
     
     assymetry_mask_hz = np.concatenate((overlap_new_hz, overlap_new1_hz), axis=1)
     
-    if 2*int(xc)<224:
+    if 2*int(xc)<img_as.shape[1]:
     
-        start = assymetry_mask_hz.shape[0]
-        end = assymetry_mask_hz.shape[1]
+        # start = assymetry_mask_hz.shape[0]
+        # end = assymetry_mask_hz.shape[1]
         assymetry_mask_final_hz = np.delete(assymetry_mask_hz, np.s_[0:diff], axis=1)
         
     else:
         
-        start = assymetry_mask_hz.shape[0]
-        end = assymetry_mask_hz.shape[1]
-        assymetry_mask_final_hz = np.delete(assymetry_mask_hz, np.s_[start:end], axis=1)
+        # start = assymetry_mask_hz.shape[0]
+        end = img_as.shape[1]
+        assymetry_mask_final_hz = np.delete(assymetry_mask_hz, np.s_[end:(end+diff)], axis=1)
     
     # plt.figure()
     # plt.imshow(assymetry_mask_final_hz)
@@ -359,20 +353,20 @@ def AsymmetryScore(mn, II):
     img_as = color.rgb2gray(img_as)
     
        
-    if 2*int(yc)<224:
+    if 2*int(yc)<img_as.shape[0]:
         
-        diff = 224-(2*int(yc))
-        padding_matrix = np.zeros([int(diff), 224])
+        diff = img_as.shape[0]-(2*int(yc))
+        padding_matrix = np.zeros([int(diff), img_as.shape[1]])
         s3 = img_as[:int(yc), :]
         s3 = np.concatenate((padding_matrix, s3), axis=0)
-        s4 = img_as[int(yc):224, :]
+        s4 = img_as[int(yc):img_as.shape[0], :]
         
     else:
 
-        diff = 2*int(yc)-224
-        padding_matrix = np.zeros([int(diff), 224])
+        diff = 2*int(yc)-img_as.shape[0]
+        padding_matrix = np.zeros([int(diff), img_as.shape[1]])
         s3 = img_as[:int(yc), :]
-        s4 = img_as[int(yc):224, :]
+        s4 = img_as[int(yc):img_as.shape[0], :]
         s4 = np.concatenate((s4, padding_matrix), axis=0)    
     
     # plt.figure()
@@ -433,15 +427,15 @@ def AsymmetryScore(mn, II):
     
     assymetry_mask = np.concatenate((overlap_new, overlap_new1), axis=0)
     
-    if 2*yc<224:
+    if 2*int(yc)<img_as.shape[0]:
 
         assymetry_mask_final_vt = np.delete(assymetry_mask, np.s_[0:diff], axis=0)
         
     else:
         
-        start = assymetry_mask.shape[1]
-        end = assymetry_mask.shape[0]
-        assymetry_mask_final_vt = np.delete(assymetry_mask, np.s_[start:end], axis=0)
+        # start = assymetry_mask.shape[1]
+        end1 = img_as.shape[0]
+        assymetry_mask_final_vt = np.delete(assymetry_mask, np.s_[end1:(end1+diff)], axis=0)
     
     # plt.figure()
     # plt.imshow(assymetry_mask_final_vt)
@@ -451,17 +445,19 @@ def AsymmetryScore(mn, II):
     
     ##########################################################
     # add the two masks
-    Asymmetry_FeatureMask = np.zeros((224, 224))
+    Asymmetry_FeatureMask = np.zeros((img_as.shape[0], img_as.shape[1]))
     Asymmetry_FeatureMask = assymetry_mask_final_hz+ assymetry_mask_final_vt
     
     
-    for i in range(int(Asymmetry_FeatureMask.shape[0])): 
-        for j in range(int(Asymmetry_FeatureMask.shape[1])): 
-            if Asymmetry_FeatureMask[i, j]> 0:
-               Asymmetry_FeatureMask[i, j]=1
-            else:
-               Asymmetry_FeatureMask[i, j]=0 
+    # for i in range(int(Asymmetry_FeatureMask.shape[0])): 
+    #     for j in range(int(Asymmetry_FeatureMask.shape[1])): 
+    #         if Asymmetry_FeatureMask[i, j]> 0:
+    #            Asymmetry_FeatureMask[i, j]=1
+    #         else:
+    #            Asymmetry_FeatureMask[i, j]=0 
     
+    Asymmetry_FeatureMask[Asymmetry_FeatureMask > 0] = 1 
+    # plt.figure()
     # plt.imshow(Asymmetry_FeatureMask)
     # plt.axis('off')
     # plt.title("Asymmetry Feature Mask")
@@ -470,15 +466,49 @@ def AsymmetryScore(mn, II):
     # Rotate back
     center = (xc, yc)
         
-    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=-50, scale=1)
+    rotate_matrix = cv2.getRotationMatrix2D(center=center, angle=-angle, scale=1)
     # rotate the image using cv2.warpAffine
     rotated_image = cv2.warpAffine(src=Asymmetry_FeatureMask.copy(), M=rotate_matrix, dsize=(width, height))
-
-    # plt.figure(figsize=(8,8))
-    # plt.imshow(rotated_image)
+    
+    
+    # for i in range(int(rotated_image.shape[0])): 
+    #     for j in range(int(rotated_image.shape[1])): 
+    #         if rotated_image[i, j]> 0:
+    #            rotated_image[i, j]=1
+    #         else:
+    #            rotated_image[i, j]=0 
+    
+    rotated_image[rotated_image > 0] = 1 
+    
+   
+    
+    # sample = rotated_image.copy()
+    
+    # plt.imsave('OriginalImage.jpg',rotated_image)
+        
+    # img = cv2.imread('OriginalImage.jpg')
+    
+    # sample = cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+    
+    # cv2.ellipse(sample, ellipse, (128, 128, 128), 20)
+    # cv2.circle(sample, (int(xc),int(yc)), 10, (100, 100, 100), -1)
+    # cv2.line(sample, (int(xtop),int(ytop)), (int(xbot),int(ybot)), (100, 100, 100), 15)
+    # cv2.line(sample, (int(xtop_m),int(ytop_m)), (int(xbot_m),int(ybot_m)), (100, 100, 100), 15)
+    
+    # # cv2.imwrite('rotated_image.jpg', sample)
+    
+    # # img__final = cv2.imread('rotated_image.jpg')
+    
+   
+    # # plt.figure(figsize=(8,8))
+    # #plt.imshow(rotated_image)
+    # plt.figure()
+    # plt.imshow(sample)
     # plt.axis('off')
-    # plt.title("ReRotated Asymmetry Feature Mask")
+    # #plt.title("ReRotated Asymmetry Feature Mask")
     # plt.show()
+    
+    
     
     
     ############################################################
@@ -486,52 +516,52 @@ def AsymmetryScore(mn, II):
     
     pixels_nz = cv2.countNonZero(Asymmetry_FeatureMask) 
 
-    lesion_area = cv2.countNonZero(fg.copy())
+    lesion_area = cv2.countNonZero(gray.copy())
      
     Asymmetry_Score = (pixels_nz/ lesion_area) 
     
     # print('pixels', pixels)
-    print('Asymmetry FeatureScore', Asymmetry_Score)
+    #print('Asymmetry FeatureScore', Asymmetry_Score)
+    ratio = 0.8
+    width = rotated_image.shape[0]
+    height = rotated_image.shape[1]
+    new_size = ratio * min(width, height)
+    img = trF.center_crop(torch.tensor(rotated_image), new_size)
+    PIL_image = Image.fromarray(np.uint8(img.numpy()))
+    # PIL_image = Image.fromarray(img.numpy())
+    # PIL_image = Image.fromarray(np.uint8(rotated_image))
+
+    TS = transformations(PIL_image)
     
+    IM = TS.numpy()
+    IM = np.moveaxis(IM, 0, -1)
+    cropped_AM=IM[:, :, :]
     
-    return Asymmetry_Score, rotated_image
+    ImageShape = [width, height]
+    
+    return Asymmetry_Score, cropped_AM, ELP, ImageShape
 
 ###########################################################################
  
 
-def BorderScore(mn, II):
+def BorderScore(mn, data_images_lesion):
     
-    I = II[mn, :, :, :].unsqueeze(0)
-    I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
-    IM = I_extract
-    IM_Original = I_extract.numpy()
-    IM_Original = np.moveaxis(IM_Original, 0, -1)
-    img=IM_Original[:, :, :]
-    
-    # plt.figure()
-    # plt.imshow(img)
-    # plt.axis('off')
+    img = data_images_lesion[mn]
     plt.imsave('OriginalImage.jpg',img)
         
     img = cv2.imread('OriginalImage.jpg')
     img=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(gray, 0, 255,cv2.THRESH_BINARY_INV +cv2.THRESH_OTSU)
-    kernel = np.ones((3, 3), np.uint8)
-    closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE,kernel, iterations = 15)
-    bg = cv2.dilate(closing, kernel, iterations = 1)
-    dist_transform = cv2.distanceTransform(closing, cv2.DIST_L2, 0)
-    ret, fg = cv2.threshold(dist_transform, 0.02*dist_transform.max(), 255, 0)
-    
-    contours,hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    contours,hierarchy = cv2.findContours(gray.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     c = max(contours, key=cv2.contourArea)
-    clist = c.tolist()
+    #clist = c.tolist()
     
-    M = cv2.moments(thresh)
+    # M = cv2.moments(gray)
     
-    cX = int(M["m10"] / M["m00"])
-    cY = int(M["m01"] / M["m00"])
+    # cX = int(M["m10"] / M["m00"])
+    # cY = int(M["m01"] / M["m00"])
     
     ellipse = cv2.fitEllipse(c)
     (xc,yc),(d1,d2),angle = ellipse
@@ -623,7 +653,7 @@ def BorderScore(mn, II):
         
         # CPie += CSlice 
         CPie['layer_' + str(i)] = CSlice
-        cv2.drawContours(img, [CSlice], 0, CLR, -1)   
+        #cv2.drawContours(img, [CSlice], 0, CLR, -1)   
         # plt.figure()
         # plt.imshow(img)
         # plt.axis('off')
@@ -744,7 +774,7 @@ def BorderScore(mn, II):
    
         ### This is the threshold to be ste for border score
         
-        if STD[std]> 6:
+        if STD[std]> 13:
             BScore = BScore+1
         
     # print(BScore)
@@ -755,6 +785,7 @@ def BorderScore(mn, II):
     # plt.axis('off')
     # plt.rcParams["font.size"] = "20"
     # plt.title('Border:  %i' %BScore)
+    
     
     # Border Saliency score:
     
@@ -768,9 +799,9 @@ def BorderScore(mn, II):
         # point = tuple(CT[pt, :])
             
         targetY = CT[pt, 1] # point[1]
-        gunY = cY
+        gunY = int(yc)
         targetX = CT[pt, 0] #point[0]
-        gunX = cX
+        gunX = int(xc)
         
         myradians = math.atan2(targetY-gunY, targetX-gunX)
         mydegrees = math.degrees(myradians)
@@ -821,7 +852,7 @@ def BorderScore(mn, II):
     
     ##########################################
     
-    mask = np.zeros((224, 224), np.uint8)  
+    mask = np.zeros((img.shape[0], img.shape[1]), np.uint8)  
     E_OUT = np.int0(E_OUT) 
     E_IN = np.int0(E_IN)
     
@@ -837,7 +868,7 @@ def BorderScore(mn, II):
     # RING = np.where(img_border2 == 255)
     boolArr = (img_border2 == 255)
     
-    mask = np.zeros((224, 224), np.uint8) 
+    mask = np.zeros((img.shape[0], img.shape[1]), np.uint8) 
     
     ring= []
     for m in range(int(boolArr.shape[0])):
@@ -856,120 +887,118 @@ def BorderScore(mn, II):
     # plt.figure()
     # plt.imshow(mask)
     # plt.axis('off')
+    ratio = 0.8
+    width = mask.shape[0]
+    height = mask.shape[1]
+    new_size = ratio * min(width, height)
+    img = trF.center_crop(torch.tensor(mask), new_size)
+    PIL_image = Image.fromarray(np.uint8(img.numpy()))
     
-        
+    # PIL_image = Image.fromarray(np.uint8(mask))
+
+    TS = transformations(PIL_image)
     
-    return BScore, mask
+    IM = TS.numpy()
+    IM = np.moveaxis(IM, 0, -1)
+    cropped_BM=IM[:, :, :]    
+    
+    return BScore, cropped_BM
 
 ####
-
-def ColorScoreMatrix(mn, II):
+def ColorScore(mn, data_images, data_images_lesion):
     
-    I = II[mn, :, :, :].unsqueeze(0)
-    I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
-    IM = I_extract
+    
+    #########################################################
+    IM_Original = data_images[mn]
+    IM_Original = cv2.cvtColor(IM_Original,cv2.COLOR_BGR2RGB)
+    IM_Original = np.moveaxis(IM_Original, 2, 0)
+    IM_Original = torch.tensor(IM_Original)
+    IM_Original = IM_Original.unsqueeze(0)
+    # I_extract = utils.make_grid(IM_Original, nrow=1, normalize=False, scale_each=True)
+    I_extract = utils.make_grid(IM_Original.double(), nrow=1, normalize=True, scale_each=True)
+    
+    # I = II[mn, :, :, :].unsqueeze(0)
+    # I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
+    # IM = I_extract
     IM_Original = I_extract.numpy()
     IM_Original = np.moveaxis(IM_Original, 0, -1)
     
-    img=IM_Original[:, :, :]
+    # plt.figure()
+    # plt.imshow(IM_Original)
+    # plt.axis('off')
+    
+    img = data_images_lesion[mn]
     plt.imsave('OriginalImage.jpg',img)
         
     img = cv2.imread('OriginalImage.jpg')
     img=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(gray, 0, 255,cv2.THRESH_BINARY_INV +cv2.THRESH_OTSU)
-    kernel = np.ones((3, 3), np.uint8)
-    closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE,kernel, iterations = 15)
-    bg = cv2.dilate(closing, kernel, iterations = 1)
-    dist_transform = cv2.distanceTransform(closing, cv2.DIST_L2, 0)
-    ret, fg = cv2.threshold(dist_transform, 0.02*dist_transform.max(), 255, 0)
     
+    fg = gray.copy()
     from skimage.color import rgb2lab, lab2rgb
     Xsub_lab = rgb2lab(IM_Original)
+    # Xsub_lab = rgb2lab(img)
     # plotMinMax(Xsub_lab,labels=["L","A","B"]) 
     
-    Color_Score = 0
+    #########################################################
+    # IM_Original = data_images[mn]
+    # IM_Original = cv2.cvtColor(IM_Original,cv2.COLOR_BGR2RGB)
+    # img = data_images_lesion[mn]
+    # # img=IM_Original[:, :, :]
+    # # plt.figure()
+    # # plt.imshow(IM_Original)
+    # # plt.axis('off')
+    # plt.imsave('OriginalImage.jpg',img)
         
-    # Red Color    
+    # img = cv2.imread('OriginalImage.jpg')
+    # img=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
+    # gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # fg = gray.copy()
+    # from skimage.color import rgb2lab, lab2rgb
+    # Xsub_lab = rgb2lab(IM_Original)
+    ###########################################################
+    
+    Bool_fg = fg == 255
+
+    # Red Color
     point_a = np.array((54.29,80.81,69.89))
-    
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
-    
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp
-                
-    E_Red = E       
-    
+   
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_Red = np.ones((img.shape[0], img.shape[1]))*1000000
         
+    E_Red[Bool_fg]= E_Temp[Bool_fg] 
+    
     # Black Color
     
     # 	[0.06, 0.27, 0.10] − [39.91, 30.23, 22.10]
     
     point_a = np.array((0.06, 0.27, 0.10))
     
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_Black = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_Black[Bool_fg]= E_Temp[Bool_fg] 
     
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp    
-                
-                
-    E_Black = E     
-    
+        
     # White Color
     
     point_a = np.array((100,0,0))
     
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
-    
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp
-                
-    E_White = E 
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_White = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_White[Bool_fg]= E_Temp[Bool_fg] 
   
                 
     # Blue-gray Color
     
     point_a = np.array((50.28, -30.14, -11.96))
     
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
-    
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp
-                
-                
-    E_BlueGray = E 
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_BlueGray = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_BlueGray[Bool_fg]= E_Temp[Bool_fg]
     
     
     # Dark Brown Color
@@ -977,364 +1006,294 @@ def ColorScoreMatrix(mn, II):
     
     point_a = np.array((14.32, 6.85, 6.96))
     
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
-    
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp
-                
-    E_DarkBrown = E 
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_DarkBrown = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_DarkBrown[Bool_fg]= E_Temp[Bool_fg]
     
                 
     # Light Brown Color
     # [47.94, 11.89, 19.86] − [71.65, 44.81, 64.78]
     
-    point_a = np.array((47.94, 11.89, 19.86))
+    point_a = np.array((47.94, 11.89, 19.86)) # change here again
     
-    E = np.ones((224, 224))*1000000
-    for i in range(int(Xsub_lab.shape[0])): 
-        for j in range(int(Xsub_lab.shape[1])): 
-            if fg[i,j] == 255:
-                
-                b_L = Xsub_lab[i, j, 0]
-                b_a = Xsub_lab[i, j, 1]
-                b_b = Xsub_lab[i, j, 2]
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_LightBrown = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_LightBrown[Bool_fg]= E_Temp[Bool_fg]
     
-                point_b = np.array((b_L, b_a, b_b))
-                E_temp = np.linalg.norm(point_a - point_b)
-                E[i, j] = E_temp
-                
-                
-    E_LightBrown = E 
     
-   
-    # Color_Mask = E_Red+ E_White+ E_Black + E_LightBrown + E_DarkBrown + E_BlueGray
+     # Blue-gray Color
     
+    point_a = np.array((50.28, -30.14, -11.96))
+    
+    E_Temp = np.sqrt(np.sum((Xsub_lab[:, :, :] - point_a) ** 2, axis=2))
+    E_BlueGray = np.ones((img.shape[0], img.shape[1]))*1000000
+        
+    E_BlueGray[Bool_fg]= E_Temp[Bool_fg]
+    
+    ################# Thresholding
+    
+        
+    Color_Score = 0
+    TH=10    
+    # Red Color
+    
+    #E_Red = E_Red_Images[img_number].copy()   
+
+    BoolE = E_Red< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+    
+    E_Red = np.zeros((img.shape[0], img.shape[1]))    
+    E_Red[BoolE] = 1
+
+
+    # White Color    
+    #E_White = E_White_Images[img_number].copy()   
+
+    BoolE = E_White< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+        
+    E_White = np.zeros((img.shape[0], img.shape[1]))    
+    E_White[BoolE] = 1    
+    
+    # Black Color    
+    #E_Black = E_Black_Images[img_number].copy()   
+
+    BoolE = E_Black< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+    
+    E_Black = np.zeros((img.shape[0], img.shape[1]))    
+    E_Black[BoolE] = 1
+    
+    # LightBrown Color    
+    #E_LightBrown = E_LightBrown_Images[img_number].copy()   
+
+    BoolE = E_LightBrown< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+    
+    E_LightBrown = np.zeros((img.shape[0], img.shape[1]))    
+    E_LightBrown[BoolE] = 1    
+        
+    # DarkBrown Color    
+    #E_DarkBrown = E_DarkBrown_Images[img_number].copy()   
+
+    BoolE = E_DarkBrown< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+    
+    E_DarkBrown = np.zeros((img.shape[0], img.shape[1]))    
+    E_DarkBrown[BoolE] = 1      
+        
+    # BlueGray Color    
+    #E_BlueGray = E_BlueGray_Images[img_number].copy()   
+
+    BoolE = E_BlueGray< TH
+    
+    if np.any(BoolE) == True:
+        Color_Score = Color_Score + 1
+        
+    E_BlueGray = np.zeros((img.shape[0], img.shape[1]))    
+    E_BlueGray[BoolE] = 1   
+    
+    #print(Color_Score)
+    
+    Color_Mask = np.zeros((img.shape[0], img.shape[1]))
+    Color_Mask = E_Red+ E_White+ E_Black + E_LightBrown + E_DarkBrown + E_BlueGray
+    Color_Mask[Color_Mask>0] = 1 
     
     # for i in range(int(Color_Mask.shape[0])): 
     #     for j in range(int(Color_Mask.shape[1])): 
     #         if Color_Mask[i, j]> 0:
-    #            Color_Mask[i, j]=1
+    #             Color_Mask[i, j]=1
     #         else:
-    #            Color_Mask[i, j]=0 
+    #             Color_Mask[i, j]=0 
+               
+    # Color_Mask_New = E_Red+ E_White+ E_Black + E_LightBrown + E_DarkBrown + E_BlueGray 
+    # Color_Mask_New[Color_Mask_New>0] = 1         
+    # # (Color_Mask==Color_Mask_New).all()
     
-    return  E_Red, E_White, E_Black, E_LightBrown, E_DarkBrown, E_BlueGray
+    ratio = 0.8
+    width = Color_Mask.shape[0]
+    height = Color_Mask.shape[1]
+    new_size = ratio * min(width, height)
+    img = trF.center_crop(torch.tensor(Color_Mask), new_size)
+    PIL_image = Image.fromarray(np.uint8(img.numpy()))
+    
+    #PIL_image = Image.fromarray(np.uint8(Color_Mask))
 
-# #############################################
+    TS = transformations(PIL_image)
+    
+    IM = TS.numpy()
+    IM = np.moveaxis(IM, 0, -1)
+    cropped_CM=IM[:, :, :] 
+               
+    return Color_Score, cropped_CM
 
-E_Red_Images = []
-E_White_Images = []
-E_Black_Images = []
-E_LightBrown_Images = []
-E_DarkBrown_Images = []
-E_BlueGray_Images = []
-# E_Color_Mask_Images = []
 
-for mn in range(II.shape[0]):# II.shape[0]
-         
-        print("ColorMatrixCalculation for image number %d " %(mn)) 
-        
-        EE_Red, EE_White, EE_Black, EE_LightBrown, EE_DarkBrown, EE_BlueGray = ColorScoreMatrix(mn, II_color)
-           
-        E_Red_Images.append(EE_Red)
-        E_White_Images.append(EE_White)
-        E_Black_Images.append(EE_Black)
-        E_LightBrown_Images.append(EE_LightBrown)
-        E_DarkBrown_Images.append(EE_DarkBrown)
-        E_BlueGray_Images.append(EE_BlueGray)
-        # E_Color_Mask_Images.append(EColor_Mask)
-        
-######################################################
+###############################################
 
-def ColorThreshold(img_number):
+import torch
 
-    Color_Score = 0
-        
-    # Red Color    
-    E_Red = np.zeros((224, 224))
-    E_Red = E_Red_Images[img_number].copy()       
+data_old = torch.load('features_train_final.pt', map_location ='cpu')
+
+OriginalImagesCropped = data_old['original_images']
+
+preprocessed_images = data_old['preprocessed_images']
+
+segmented_images = []
+for mn in range(len(data_images_lesion)):# len(data_images_lesion)
     
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_Red_Images[img_number].shape[0])): 
-        for j in range(int(E_Red_Images[img_number].shape[0])): 
-            if E_Red[i, j]< 15:
-               E_Red[i, j]=1
-            else:
-               E_Red[i, j]=0    
+    img_lm = data_images_lesion[mn]
+
+    ratio = 0.8
+    width = img_lm.shape[0]
+    height = img_lm.shape[1]
+    new_size = ratio * min(width, height)
+    img = trF.center_crop(torch.tensor(img_lm), new_size)
+    PIL_image = Image.fromarray(np.uint8(img.numpy()))
+
+    TS = transformations(PIL_image)
+    
+    IM = TS.numpy()
+    IM = np.moveaxis(IM, 0, -1)
+    cropped_LM = IM[:, :, :] 
+    
+    segmented_images.append(cropped_LM)
                
-    is_all_zero = np.all((E_Red == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-        
-        
-    # White Color    
-    E_White = np.zeros((224, 224))
-    E_White = E_White_Images[img_number].copy()         
-    
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_White_Images[img_number].shape[0])): 
-        for j in range(int(E_White_Images[img_number].shape[0])): 
-            if E_White[i, j]< 15:
-               E_White[i, j]=1
-            else:
-               E_White[i, j]=0    
-               
-    is_all_zero = np.all((E_White == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-        
-    # Black Color    
-    E_Black = np.zeros((224, 224))
-    E_Black = E_Black_Images[img_number].copy()         
-    
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_Black_Images[img_number].shape[0])): 
-        for j in range(int(E_Black_Images[img_number].shape[0])): 
-            if E_Black[i, j]< 15:
-               E_Black[i, j]=1
-            else:
-               E_Black[i, j]=0    
-               
-    is_all_zero = np.all((E_Black == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-    # LightBrown Color    
-    E_LightBrown = np.zeros((224, 224))
-    E_LightBrown = E_LightBrown_Images[img_number].copy()         
-    
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_LightBrown_Images[img_number].shape[0])): 
-        for j in range(int(E_LightBrown_Images[img_number].shape[0])): 
-            if E_LightBrown[i, j]< 15:
-               E_LightBrown[i, j]=1
-            else:
-               E_LightBrown[i, j]=0    
-               
-    is_all_zero = np.all((E_LightBrown == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-    # DarkBrown Color    
-    E_DarkBrown = np.zeros((224, 224))
-    E_DarkBrown = E_DarkBrown_Images[img_number].copy()         
-    
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_DarkBrown_Images[img_number].shape[0])): 
-        for j in range(int(E_DarkBrown_Images[img_number].shape[0])): 
-            if E_DarkBrown[i, j]< 15:
-               E_DarkBrown[i, j]=1
-            else:
-               E_DarkBrown[i, j]=0    
-               
-    is_all_zero = np.all((E_DarkBrown == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-        
-    # BlueGray Color    
-    E_BlueGray = np.zeros((224, 224))
-    E_BlueGray = E_BlueGray_Images[img_number].copy()         
-    
-    # Saliency region with color feature on Attention Map
-    for i in range(int(E_BlueGray_Images[img_number].shape[0])): 
-        for j in range(int(E_BlueGray_Images[img_number].shape[0])): 
-            if E_BlueGray[i, j]< 15:
-               E_BlueGray[i, j]=1
-            else:
-               E_BlueGray[i, j]=0    
-               
-    is_all_zero = np.all((E_BlueGray == 0))
-    
-    if is_all_zero:
-        print('Array contains only 0')
-        
-    else:
-        Color_Score = Color_Score + 1
-        print('Array has non-zero items too')
-        
-        
-    print(Color_Score)
-    
-    Color_Mask = np.zeros((224, 224))
-    Color_Mask = E_Red+ E_White+ E_Black + E_LightBrown + E_DarkBrown + E_BlueGray
-    
-    
-    for i in range(int(Color_Mask.shape[0])): 
-        for j in range(int(Color_Mask.shape[1])): 
-            if Color_Mask[i, j]> 0:
-               Color_Mask[i, j]=1
-            else:
-               Color_Mask[i, j]=0 
-               
-               
-               
-    return Color_Score, Color_Mask
 
 ########################################################
 # Saving scores in data structures
 
 Asymmetry_Scores = []
-Asymmetry_FeatureMask = []
+#Asymmetry_FeatureMask = []
+Cropped_AMask = []
 Border_Scores = []
-Border_FeatureMask = []
+#Border_FeatureMask = []
+Cropped_BMask = []
 Color_Scores = []
-Color_FeatureMask = []
+#Color_FeatureMask = []
+Cropped_CMask = []
+ImageShape = []
+ELP =[]
      
-for mn in range(II.shape[0]): # 
+for mn in range(len(data_images)): # len(data_images)
     
     print("Computation of ABC scores for image number %d " % mn) 
     
     try:
-        AScore, AMask = AsymmetryScore(mn, II)
+        AScore, AM, E, IS = AsymmetryScore(mn, data_images_lesion)
         
         # Asymmetry_Scores.append(AScore)
         
         # Asymmetry_FeatureMask.append(AMask)
     except:
         AScore = []
-        AMask = []
+        #AMask = []
+        AM = []
+        E= []
+        IS=[]
         
     try:
-        BScore, BMask = BorderScore(mn, II)
+        BScore, BM = BorderScore(mn, data_images_lesion)
         
         # Border_Scores.append(BScore)
         
         # Border_FeatureMask.append(BMask)
     except:
         BScore = []
-        BMask = []
+        #BMask = []
+        BM = []
         
     try:
-        CScore, CMask = ColorThreshold(mn)
+        CScore, CM = ColorScore(mn, data_images, data_images_lesion)
         
         # Color_Scores.append(CScore)
         
         # Color_FeatureMask.append(CMask)
     except:
         CScore = []
-        CMask = []    
+        #CMask = []  
+        CM = []
        
 
     Asymmetry_Scores.append(AScore)
     
-    Asymmetry_FeatureMask.append(AMask)
+    #Asymmetry_FeatureMask.append(AMask)
+    
+    Cropped_AMask.append(AM)
+    
+    ELP.append(E)
+    
+    ImageShape.append(IS)
     
     Border_Scores.append(BScore)
     
-    Border_FeatureMask.append(BMask)
+    #Border_FeatureMask.append(BMask)
+    
+    Cropped_BMask.append(BM)
     
     Color_Scores.append(CScore)
     
-    Color_FeatureMask.append(CMask)
+    #Color_FeatureMask.append(CMask)
+    
+    Cropped_CMask.append(CM)
 
 ################################################
-preprocessed_images = []
-original_images = []
-seg_images = []
-
-for mn in range(II.shape[0]):   
-    
-    I = II[mn, :, :, :].unsqueeze(0)
-    I_extract = utils.make_grid(I, nrow=1, normalize=True, scale_each=True)
-    IM_Original = I_extract.numpy()
-    IM_Original = np.moveaxis(IM_Original, 0, -1)
-    img=IM_Original[:, :, :]   
-    
-    preprocessed_images.append(img)
-    
-       
-    plt.imsave('PreprocessedImage.jpg',img)
-        
-    img = cv2.imread('PreprocessedImage.jpg')
-    img=cv2.cvtColor(img,cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    ret, thresh = cv2.threshold(gray, 0, 255,cv2.THRESH_BINARY_INV +cv2.THRESH_OTSU)
-    kernel = np.ones((3, 3), np.uint8)
-    closing = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE,kernel, iterations = 15)
-    bg = cv2.dilate(closing, kernel, iterations = 1)
-    dist_transform = cv2.distanceTransform(closing, cv2.DIST_L2, 0)
-    ret, fg = cv2.threshold(dist_transform, 0.02*dist_transform.max(), 255, 0)
-    
-    seg_images.append(fg)
-    
-    I_color = II_color[mn, :, :, :].unsqueeze(0)
-    I_extract_color = utils.make_grid(I_color, nrow=1, normalize=True, scale_each=True)
-    IM_Original_color = I_extract_color.numpy()
-    IM_Original_color = np.moveaxis(IM_Original_color, 0, -1)
-    img_color=IM_Original_color[:, :, :]   
-    
-    original_images.append(img_color)
-##################################################
-   
 
 torch.save({
+    'original_images': OriginalImagesCropped,
+    'segmented_images': segmented_images,
     'preprocessed_images': preprocessed_images,
-    'original_images': original_images,
-    'segmented_images': seg_images,
     'DNN_predictions': predictions,
     'DNN_probabilities': prob_st,
     'ground_truth': Labels,
     'Asymmetry_Scores': Asymmetry_Scores,
-    'Asymmetry_FeatureMask': Asymmetry_FeatureMask,
+    'Cropped_AMask': Cropped_AMask,
     'Border_Scores': Border_Scores,
-    'Border_FeatureMask': Border_FeatureMask, 
+    'Cropped_BMask': Cropped_BMask,
     'Color_Scores': Color_Scores,
-    'Color_FeatureMask': Color_FeatureMask 
-}, 'features_train_final.pt')
+    'Cropped_CMask': Cropped_CMask,
+    'Ellipse': ELP,
+    'ImageShape': ImageShape
+}, 'features_train_v2.pt')
 
 
+# ###########################################################################
+import torch
+data_F = torch.load('features_test_v2.pt', map_location ='cpu')
 
-###########################################################################
+##########################################################
+# plt.figure()
+# plt.imshow(data_images[mn])
+# plt.axis('off')
+# plt.figure()
+# plt.imshow(data_images_lesion[mn])
+# plt.axis('off')
+# plt.figure()
+# plt.imshow(segmented_images[mn])
+# plt.axis('off')
+# plt.figure()
+# plt.imshow(data_F['Cropped_AMask'][mn])
+# plt.axis('off')
+# plt.figure()
+# plt.imshow(data_F['Cropped_BMask'][mn])
+# plt.axis('off')
+# plt.figure()
+# plt.imshow(data_F['Cropped_CMask'][mn])
+# plt.axis('off')
 
-data_F = torch.load('features_test_final.pt', map_location ='cpu')
+# ##################################################################
 plt.figure()
-plt.imshow(data_F['original_images'][3])
-plt.axis('off')
-plt.figure()
-plt.imshow(data_F['segmented_images'][3])
-plt.axis('off')
-plt.figure()
-plt.imshow(data_F['Asymmetry_FeatureMask'][3])
-plt.axis('off')
-plt.figure()
-plt.imshow(data_F['Border_FeatureMask'][3])
-plt.axis('off')
-plt.figure()
-plt.imshow(data_F['Color_FeatureMask'][3])
+plt.imshow(data_F['original_images'][mn])
 plt.axis('off')
 
