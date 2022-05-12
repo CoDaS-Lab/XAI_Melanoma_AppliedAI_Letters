@@ -139,7 +139,7 @@ transformations = transforms.Compose([
 
 ##########################################################################        
         
-def AsymmetryScore(mn, data_images):
+def AsymmetryScore(mn, data_images_lesion):
     
     img = data_images_lesion[mn]
     # I = II[mn, :, :, :].unsqueeze(0)
