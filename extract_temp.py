@@ -116,7 +116,6 @@ def main():
                 responses = [responses[i] for i in range(responses.shape[0])]
                 csv_writer.writerows(responses)
                 
-                # probs = F.softmax(pred_extract).cpu().numpy()
                 # log images
                 if opt.log_images:
                     I_extract = utils.make_grid(images_extract, nrow=8, normalize=True, scale_each=True)
@@ -132,12 +131,7 @@ def main():
                             writer.add_image('extract/attention_map_2', attn2, i)
 
                 images_extractF+=[images_extract]
-                # pred_extractF += [pred_extract]
-                # DNNProbsF += [probs]
                 predictionsF += [predict]
-                # FLF += [FL]
-                # a1F += [a1]
-                # a2F += [a2]
                 labels_extractF += labels_extract
 
     AP, AUC, precision_mean, precision_mel, recall_mean, recall_mel = compute_metrics(f'{opt.data_type}_results.csv', f'{opt.data_type}.csv')
@@ -148,14 +142,8 @@ def main():
 
     # save gpu tensors
     torch.save({
-        # 'a1': a1F,
-        # 'a2': a2F,
-        # 'extract': pred_extractF,
-        # 'FinalLayer': FLF,
         'Labels': labels_extractF,
         'Images': images_extractF,
-        # 'DNN_probs': DNNProbsF,
-        # 'predictions': predictionsF
     }, 'extract_train_color.pt')
 
     # load gpu tensors using: torch.load('extract.pt')
