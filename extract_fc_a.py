@@ -110,8 +110,7 @@ def main():
                 responses = [responses[i] for i in range(responses.shape[0])]
                 csv_writer.writerows(responses)
                 
-                probs = F.softmax(pred_extract).cpu()
-                
+                               
                 # log images
                 if opt.log_images:
                     I_extract = utils.make_grid(images_extract, nrow=8, normalize=True, scale_each=True)
@@ -133,7 +132,7 @@ def main():
                 a1F += [a1]
                 a2F += [a2]
                 labels_extractF += labels_extract
-                DNNProbsF += [probs]
+                
 
     AP, AUC, precision_mean, precision_mel, recall_mean, recall_mel = compute_metrics(f'{opt.data_type}_results.csv', f'{opt.data_type}.csv')
     print("\nextract result: accuracy %.2f%%" % (100*correct/total))
@@ -150,7 +149,7 @@ def main():
         'Labels': labels_extractF,
         'Images': images_extractF,
         'predictions': predictionsF,
-        'dnn_probs': probs,
+        
     }, 'extract_test_final_new.pt')
 
 
