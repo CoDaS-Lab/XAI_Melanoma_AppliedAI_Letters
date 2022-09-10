@@ -1,0 +1,903 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load tidyverse 
+
+```{r}
+library(corrr)
+```
+
+```{r}
+library(tidyverse)
+```
+```{r}
+library(readxl)
+```
+
+```{r}
+library(tidyjson)
+```
+```{r}
+library(feather)
+```
+
+```{r}
+library(ggExtra)
+```
+
+```{r}
+library(cowplot)
+```
+
+```{r}
+library(arrow)
+```
+
+```{r}
+library(ggdark)
+```
+
+```{r}
+library(viridis)
+```
+
+```{r}
+library(MetBrewer)
+```
+
+```{r}
+library(lme4)
+```
+
+```{r}
+library(lmerTest)
+```
+
+```{r}
+library(psych)
+```
+
+
+# Load data
+
+```{r}
+saliency_df <- readRDS("../data/saliency_scores_test_ISIC2019_20220804.rds")
+```
+
+```{r}
+saliency_df %>% head()
+```
+
+```{r}
+faith_df <- arrow::read_feather("../data/auc_predicted_ISIC2019_20220802.feather")
+```
+
+```{r}
+faith_df %>% head()
+```
+# Restructure and merge data
+```{r}
+iauc_df <- faith_df %>% 
+  filter(feature_mask == "insertion") %>% 
+    select(-c(observation_type, feature_mask)) %>% 
+  pivot_longer(-image_id, names_to = "sal", values_to = "iAUC")
+```
+
+```{r}
+dauc_df <- faith_df %>% 
+  filter(feature_mask == "deletion") %>% 
+    select(-c(observation_type, feature_mask)) %>% 
+  pivot_longer(-image_id, names_to = "sal", values_to = "dAUC")
+```
+
+```{r}
+df <- left_join(saliency_df, iauc_df, by = c("image_id", "sal"))
+df <- left_join(df, dauc_df, by = c("image_id", "sal"))
+```
+
+# Compute the difference and ratio metrics
+
+```{r}
+#random_df <- df %>% 
+#  filter(sal == "random") %>% 
+#  select(image_id, fm, score, iAUC, dAUC) %>% 
+#  rename(random_score = score, random_iAUC = iAUC, random_dAUC = dAUC)
+```
+
+```{r}
+#lesion_df <- df %>% 
+#  filter(sal == "lesion") %>% 
+#  select(image_id, fm, score, iAUC, dAUC) %>% 
+#  rename(lesion_score = score, lesion_iAUC = iAUC, lesion_dAUC = dAUC)
+```
+
+```{r}
+#df <- left_join(df, random_df, by = c("image_id", "fm"))
+#df <- left_join(df, lesion_df, by = c("image_id", "fm"))
+```
+
+```{r}
+df %>% head()
+```
+
+```{r}
+df <- df %>% 
+  mutate(#random_score_diff = score - random_score,
+         #random_iAUC_diff = iAUC - random_iAUC,
+         #random_dAUC_diff = dAUC - random_dAUC,
+         #lesion_score_diff = score - lesion_score,
+         #lesion_iAUC_diff = iAUC - lesion_iAUC,
+         #lesion_dAUC_diff = dAUC - lesion_dAUC,
+         DNN_classification = case_when(
+         ground_truth == 1 & DNN_predictions == 1 ~ "TP",
+         ground_truth == 0 & DNN_predictions == 1 ~ "FP",
+         ground_truth == 0 & DNN_predictions == 0 ~ "TN",
+         ground_truth == 1 & DNN_predictions == 0 ~ "FN",
+         ),
+         DNN_classification = factor(DNN_classification, levels = c("TP", "FP", "FN", "TN"))
+         )
+```
+
+
+### Sanity check
+```{r}
+#df %>% 
+#  filter(sal == "random") %>%
+#  summarise(mean(random_score_diff, na.rm = T),
+#            mean(random_iAUC_diff, na.rm = T),
+#            mean(random_dAUC_diff, na.rm = T)
+#            )
+```
+```{r}
+#df %>% 
+#  filter(sal == "lesion") %>%
+#  summarise(mean(lesion_score_diff, na.rm = T),
+#            mean(lesion_iAUC_diff, na.rm = T),
+#            mean(lesion_dAUC_diff, na.rm = T)
+#            )
+```
+```{r}
+df <- df %>% 
+  filter(!sal %in% c("a1", "lime", "inpxgrad"))
+```
+
+```{r}
+df %>% count(sal)
+```
+```{r}
+colnames(df)
+```
+```{r}
+#random_df_long <- df %>% 
+#  select(image_id, sal, ground_truth, random_score_diff, random_iAUC_diff) %>% 
+#  rename(score_diff = random_score_diff, iAUC_diff = random_iAUC_diff) %>% 
+#  mutate(contrast = "random")
+#lesion_df_long <- df %>% 
+#  select(image_id, sal, ground_truth, lesion_score_diff, lesion_iAUC_diff) %>% 
+#  rename(score_diff = lesion_score_diff, iAUC_diff = lesion_iAUC_diff) %>% 
+#  mutate(contrast = "lesion")
+#contrast_df <- rbind(random_df_long, lesion_df_long) %>% 
+#  mutate(contrast = factor(contrast, levels = c("random", "lesion")))
+```
+
+## Add visual randomness data
+
+```{r}
+(vr_df <- read_csv("../data/visual_randomness_test_ISIC2019.csv") %>% 
+   pivot_longer(-image_id, names_to = "sal", values_to = "visual_randomness"))
+```
+```{r}
+df <- (left_join(df, vr_df, by=c("image_id", "sal")))
+```
+
+```{r}
+#contrast_df <- left_join(contrast_df, vr_df, by=c("image_id", "sal"))
+```
+
+
+```{r}
+#contrast_df
+```
+
+```{r}
+df %>% 
+  colnames()
+```
+```{r}
+saliency_df %>% count(fm)
+```
+
+
+```{r}
+saliency_df %>% 
+  filter(sal == 'grad_cam' & fm == 'Asymmetry_Mask') %>% 
+  count(ground_truth)
+```
+
+
+```{r}
+saliency_df %>% colnames()
+```
+
+
+```{r}
+df %>% 
+  filter(sal == 'grad_cam') %>% 
+  count(ground_truth)
+```
+
+
+# Visualisations
+ 
+```{r}
+library(ggrepel)
+```
+ 
+ 
+## Interpretability
+```{r}
+ interpretability_2d_gt <- df %>% 
+   filter(!(sal %in% c("random", "lesion"))) %>% 
+   mutate(
+     saliency_method = recode(sal, a2 = "Attention",
+                              grad_cam ="GradCam",
+                              integrated_gradients = "IG",
+                              kernel_shap = "Kernel\nSHAP",
+                              occlusion = "Occlusion",
+                              rise = "RISE"),
+     #saliency_method = factor(saliency_method, levels = c("Attention", "GradCam", "IG", "Kernel\nShap",
+    #                                                          "Occlusion", "RISE"))
+     ) %>%
+   filter(!is.na(`uniform_score_diff`)) %>% 
+   group_by(saliency_method, ground_truth) %>% 
+   summarise(visual_randomness_mean = mean(visual_randomness),
+             visual_randomness_sd = sd(visual_randomness),
+             n = n()/3, #Score repeats three times so I need to divide the number of rows by 3 to get the actual sample size
+             score_difference_mean = mean(`uniform_score_diff`),
+             score_difference_sd = sd(`uniform_score_diff`)) %>% 
+   mutate(visual_randomness_se = visual_randomness_sd / sqrt(n),
+          visual_randomness_lower_ci = visual_randomness_mean - qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+          visual_randomness_upper_ci = visual_randomness_mean + qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+          score_difference_se = score_difference_sd / sqrt(n),
+          score_lower_ci = score_difference_mean - qt(1 - (0.05 / 2), n - 1) * score_difference_se,
+          score_upper_ci = score_difference_mean + qt(1 - (0.05 / 2), n - 1) * score_difference_se) %>% 
+   ungroup() %>% 
+   ggplot(aes(x = `score_difference_mean`, y = `visual_randomness_mean`, label = str_replace(saliency_method, "_", " "),
+              color = factor(ground_truth), shape = factor(ground_truth))) +
+   geom_point(size = 2) +
+   geom_errorbar(aes(ymin = visual_randomness_lower_ci, ymax = visual_randomness_upper_ci, width = 0.003)) +
+   geom_errorbarh(aes(xmin = score_lower_ci, xmax = score_upper_ci, , height = 0.002)) +
+   geom_text_repel(show.legend = F, color = "grey50", alpha = 50, size =3) +
+   scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+   scale_shape_manual(values = c(19, 15), labels =c("Benign", "Melanoma"), name = "") +
+   labs(x = "Interpretability: Semantic overlap", y = "Interpretability: Perceptual incoherence") +
+   theme_minimal() +
+   theme(legend.position = "none")
+interpretability_2d_gt
+```
+
+```{r}
+interpetability_within_method <- df %>%
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, visual_randomness, ground_truth, uniform_score_diff, fm) %>% 
+  pivot_wider(id_cols = c(image_id, sal, visual_randomness, ground_truth), names_from = fm, values_from = uniform_score_diff) %>% 
+  mutate(saliency_method = factor(sal, levels = c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2"))) %>%
+  rowwise() %>% 
+  mutate(mean_score = mean(c(Asymmetry_Mask, Border_Mask, Color_Mask), na.rm = T)) %>% 
+  ggplot(aes(x = `mean_score`, y = `visual_randomness`, color = factor(ground_truth),
+             shape = factor(ground_truth))) +
+  facet_wrap(~saliency_method, scales = "free", ncol = 3,
+             labeller = labeller(saliency_method = c("a2" = "Attention\n(r = .13)", "grad_cam" = "GradCam\n(r = .12)",
+                                                     "integrated_gradients" = "IG\n(r = -.38)",
+                                                     "kernel_shap" = "Kernel SHAP\n(r = .02)",
+                                                     "occlusion" = "Occlusion\n(r = -.01)",
+                                                     "rise" = "RISE\n(r = .12)"))) +
+  geom_point(aes(alpha = factor(ground_truth))) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_shape_manual(values = c(19, 15), labels =c("Benign", "Melanoma"), name = "") +
+  scale_alpha_manual(values = c(0.2, 0.9), guide = 'none') +
+  #scale_x_continuous(
+  #labels = scales::number_format(accuracy = 0.001)) +
+  theme_minimal() +
+  labs(x = "Interpretability: Semantic overlap", y = "Interpretability: Perceptual incoherence") +
+  theme(legend.position = "top", axis.text = element_text(size = 7), axis.text.x = element_text(angle = 20, hjust = 1))
+interpetability_within_method
+```
+
+
+```{r}
+method_feature_densities <- df %>%
+  filter(!sal %in% c("random", "lesion")) %>% 
+  mutate(saliency_method = factor(sal, levels = c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2"))) %>% 
+  ggplot(aes(x = `uniform_score_diff`, fill = fm, color = fm)) +
+  facet_wrap(~saliency_method, nrow = 1, scales = "free",
+             labeller = labeller(saliency_method = c("a2" = "Attention", "grad_cam" = "GradCam",
+                                                     "integrated_gradients" = "IG",
+                                                     "kernel_shap" = "Kernel SHAP",
+                                                     "occlusion" = "Occlusion",
+                                                     "rise" = "RISE"))) +
+  geom_density(alpha = 0.5) +
+  scale_fill_manual(values = met.brewer("Signac", 14)[c(3, 9, 13)], name = "", labels = c("Asymmetry Mask", "Border Mask", "Color Mask")) +
+  scale_color_manual(values = met.brewer("Signac", 14)[c(3, 9, 13)], name = "", labels = c("Asymmetry Mask", "Border Mask", "Color Mask")) +
+  theme_minimal() +
+  labs(x = "Interpretability: Semantic overlap", y = "Density") +
+  theme(legend.position = "top", axis.text.x = element_text(angle = 20, hjust = 1))
+  #ggsave(filename = "../output/saliency_feature.pdf", width = 20, height = 5, unit = "cm")
+method_feature_densities
+```
+```{r}
+bottom_row <- plot_grid(interpretability_2d_gt, interpetability_within_method, labels = c("B", "C"), label_size = 16)
+fig3 <- plot_grid(method_feature_densities, bottom_row, labels = c('A', ''), label_size = 16, ncol = 1, rel_heights = c(1.2, 2))
+```
+
+```{r}
+ggsave("../output/ISIC_2019_interpretability_uniform_score_diff.pdf", plot = fig3, width = 26, height = 16, units = "cm")
+```
+
+## Interpretability and Faithfulness
+
+```{r}
+iauc_per <- df %>% 
+  filter(!sal %in% c("lesion")) %>% 
+  mutate(saliency_method = recode(sal, a2 = "Attention",
+                              grad_cam ="GradCam",
+                              integrated_gradients = "IG",
+                              kernel_shap = "Kernel\nSHAP",
+                              occlusion = "Occlusion",
+                              rise = "RISE",
+                              random = "Random"),
+     #saliency_method = factor(saliency_method, levels = c("Attention", "GradCam", "IG", "Kernel\nShap",
+    #                                                          "Occlusion", "RISE", "Random"))
+     ) %>%
+  filter(!is.na(`uniform_score_diff`)) %>% 
+  group_by(saliency_method, ground_truth) %>% 
+  summarise(iAUC_difference_mean = mean(iAUC),
+            iAUC_difference_sd = sd(iAUC),
+            n = n()/3, #Score repeats three times so I need to divide the number of rows by 3 to get the actual sample size
+            visual_randomness_mean = mean(`visual_randomness`),
+            visual_randomness_sd = sd(`visual_randomness`)) %>% 
+  mutate(iAUC_difference_se = iAUC_difference_sd / sqrt(n),
+         iAUC_lower_ci = iAUC_difference_mean - qt(1 - (0.05 / 2), n - 1) * iAUC_difference_se,
+         iAUC_upper_ci = iAUC_difference_mean + qt(1 - (0.05 / 2), n - 1) * iAUC_difference_se,
+         visual_randomness_se = visual_randomness_sd / sqrt(n),
+         visual_randomness_lower_ci = visual_randomness_mean - qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+         visual_randomness_upper_ci = visual_randomness_mean + qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+         eb_height = ifelse(ground_truth == 0, 0.012, 0.036)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = `visual_randomness_mean`, y = `iAUC_difference_mean`, label = str_replace(saliency_method, "_", " "),
+             color = factor(ground_truth), shape = factor(ground_truth))) +
+  facet_wrap(~factor(ground_truth), scales = "free", labeller = labeller(`factor(ground_truth)` =
+            c("0" = "Benign", "1" = "Melanoma"))) +
+  geom_errorbar(aes(ymin = iAUC_lower_ci, ymax = iAUC_upper_ci), width = 0.0015) +
+  geom_errorbarh(aes(xmin = visual_randomness_lower_ci, xmax = visual_randomness_upper_ci, height = eb_height)) +
+  geom_text_repel(show_guide = F, color = "grey50", alpha = 0.5) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_shape_discrete(labels =c("Benign", "Melanoma"), name = "") +
+  labs(x = "Interpretability: Perceptual incoherence", y = "Faithfulness: iAUC") +
+  theme_minimal() +
+  theme(legend.position = "none")
+iauc_per
+```
+
+
+```{r}
+iauc_sem <- df %>% 
+  filter(!sal %in% c("lesion")) %>% 
+  mutate(saliency_method = recode(sal, a2 = "Attention",
+                              grad_cam ="GradCam",
+                              integrated_gradients = "IG",
+                              kernel_shap = "Kernel\nSHAP",
+                              occlusion = "Occlusion",
+                              rise = "RISE",
+                              random = "Random")) %>%
+  filter(!is.na(`uniform_score_diff`)) %>% 
+  group_by(saliency_method, ground_truth) %>% 
+  summarise(iAUC_difference_mean = mean(iAUC),
+            iAUC_difference_sd = sd(iAUC),
+            n = n()/3, #Score repeats three times so I need to divide the number of rows by 3 to get the actual sample size
+            score_difference_mean = mean(`uniform_score_diff`),
+            score_difference_sd = sd(`uniform_score_diff`)) %>% 
+  mutate(iAUC_difference_se = iAUC_difference_sd / sqrt(n),
+         iAUC_lower_ci = iAUC_difference_mean - qt(1 - (0.05 / 2), n - 1) * iAUC_difference_se,
+         iAUC_upper_ci = iAUC_difference_mean + qt(1 - (0.05 / 2), n - 1) * iAUC_difference_se,
+         score_difference_se = score_difference_sd / sqrt(n),
+         score_lower_ci = score_difference_mean - qt(1 - (0.05 / 2), n - 1) * score_difference_se,
+         score_upper_ci = score_difference_mean + qt(1 - (0.05 / 2), n - 1) * score_difference_se,
+         eb_height = ifelse(ground_truth == 0, 0.012, 0.032)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = `score_difference_mean`, y = `iAUC_difference_mean`, label = str_replace(saliency_method, "_", " "),
+             color = factor(ground_truth), shape = factor(ground_truth))) +
+  facet_wrap(~factor(ground_truth), scales = "free", labeller = labeller(`factor(ground_truth)` =
+            c("0" = "Benign", "1" = "Melanoma"))) +
+  geom_errorbar(aes(ymin = iAUC_lower_ci, ymax = iAUC_upper_ci), width = 0.002) +
+  geom_errorbarh(aes(xmin = score_lower_ci, xmax = score_upper_ci, height = eb_height)) +
+  geom_text_repel(show_guide = F, color = "grey50", alpha = 0.5) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_shape_discrete(labels =c("Benign", "Melanoma"), name = "") +
+  labs(x = "Interpretability: Semantic overlap", y = "Faithfulness: iAUC") +
+  theme_minimal() +
+  theme(legend.position = "none")
+iauc_sem 
+```
+```{r}
+method_iauc_densities <- df %>%
+  filter(!sal %in% c("lesion") &
+           fm == "Asymmetry_Mask") %>% 
+  mutate(saliency_method = factor(sal, levels = c("kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2", "integrated_gradients", "random"))) %>% 
+  ggplot(aes(x = `iAUC`, color = factor(ground_truth), fill = factor(ground_truth))) +
+  facet_wrap(~saliency_method, nrow=1, scales = "free",
+             labeller = labeller(saliency_method = c("a2" = "Attention", "grad_cam" = "GradCam",
+                                                     "integrated_gradients" = "IG",
+                                                     "kernel_shap" = "Kernel SHAP",
+                                                     "occlusion" = "Occlusion",
+                                                     "rise" = "RISE",
+                                                     "random" = "Random"))) +
+  geom_density(alpha = 0.5) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  theme_minimal() +
+  labs(x = "Faithfulness: iAUC", y = "Density") +
+  theme(legend.position = "none", axis.text = element_text(size = 7))
+  #ggsave(filename = "../output/visual_randomness_gt.pdf", width = 20, height = 5, unit = "cm")
+method_iauc_densities
+```
+```{r}
+df %>%
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, visual_randomness, ground_truth, uniform_score_diff, fm) %>% 
+  pivot_wider(id_cols = c(image_id, sal, visual_randomness, ground_truth), names_from = fm, values_from = uniform_score_diff) %>% 
+  mutate(saliency_method = factor(sal, levels = c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2"))) %>%
+  rowwise() %>% 
+  mutate(mean_score = mean(c(Asymmetry_Mask, Border_Mask, Color_Mask), na.rm = T)) %>% 
+  ggplot(aes(x = `mean_score`, color = factor(ground_truth), fill = factor(ground_truth))) +
+  facet_wrap(~saliency_method, nrow=1, scales = "free",
+             labeller = labeller(saliency_method = c("a2" = "Attention", "grad_cam" = "GradCam",
+                                                     "integrated_gradients" = "IG",
+                                                     "kernel_shap" = "Kernel SHAP",
+                                                     "occlusion" = "Occlusion",
+                                                     "rise" = "RISE"))) +
+  geom_density(alpha = 0.5) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  theme_minimal() +
+  labs(x = "Interpretability: Semantic overlap", y = "Density") +
+  theme(legend.position = "none", axis.text = element_text(size = 7))
+  ggsave(filename = "../output/semantic_overlap_gt.pdf", width = 20, height = 5, unit = "cm")
+```
+
+
+```{r}
+fig4 <- plot_grid(method_iauc_densities, iauc_per, iauc_sem, labels = c('A', 'B', 'C'), label_size = 16, ncol = 1, rel_heights = c(0.6, 1, 1))
+```
+```{r}
+ggsave("../output/Fig4_faithfulness_uniform_score_diff_20220810.pdf", plot = fig4, width = 20, height = 18, units = "cm")
+```
+
+# Analyses
+
+## Interpretability analysis
+```{r}
+df %>% 
+  group_by(sal) %>% 
+  summarise(mean(uniform_score_diff, na.rm = T),
+            mean(visual_randomness, na.rm = T))
+```
+```{r}
+df %>%
+  mutate(sal_coarse = case_when(
+    sal %in% c("a2", "grad_cam", "kernel_shap", "occlusion") ~ "reference_category",
+    TRUE ~ sal
+  )) %>% 
+  group_by(sal_coarse) %>% 
+  summarise(mis = mean(score, na.rm = T),
+            mip = mean(visual_randomness, na.rm = T)) %>% 
+  mutate(mip_ratio = mip/0.006363216)
+```
+
+```{r}
+pooled_cor_df <- df %>%
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, visual_randomness, iAUC, ground_truth, score, fm) %>% 
+  pivot_wider(id_cols = c(image_id, sal, visual_randomness, iAUC, ground_truth), names_from = fm, values_from = score) %>% 
+  mutate(saliency_method = factor(sal, levels = c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2"))) %>%
+  rowwise() %>% 
+  mutate(mean_score = mean(c(Asymmetry_Mask, Border_Mask, Color_Mask), na.rm = T)) %>% 
+  ungroup() %>% 
+  select(mean_score, visual_randomness, iAUC)
+```
+
+```{r}
+cor.test(pooled_cor_df$mean_score, pooled_cor_df$visual_randomness)
+```
+```{r}
+cor.test(pooled_cor_df$mean_score, pooled_cor_df$iAUC)
+```
+```{r}
+cor.test(pooled_cor_df$visual_randomness, pooled_cor_df$iAUC)
+```
+# Analyses
+
+```{r}
+cor.test(df$uniform_score_diff, df$visual_randomness)
+```
+
+
+## Interpretability analysis
+```{r}
+df %>% 
+  group_by(sal) %>% 
+  summarise(mean(uniform_score_diff, na.rm = T),
+            mean(visual_randomness, na.rm = T))
+```
+```{r}
+df %>%
+  mutate(sal_coarse = case_when(
+    sal %in% c("a2", "grad_cam", "kernel_shap", "occlusion") ~ "reference_category",
+    TRUE ~ sal
+  )) %>% 
+  group_by(sal_coarse) %>% 
+  summarise(mis = mean(score, na.rm = T),
+            mip = mean(visual_randomness, na.rm = T)) %>% 
+  mutate(mip_ratio = mip/0.006363216)
+```
+```{r}
+fit <- df %>% 
+  filter(sal %in% c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2")) %>% 
+  group_by(sal) %>% 
+  mutate(uniform_score_diff_z = scale(uniform_score_diff),
+         visual_randomness_z = scale(visual_randomness)) %>% 
+  ungroup() %>% 
+  lmer(visual_randomness_z ~ -1 + uniform_score_diff_z + (-1 + uniform_score_diff_z | sal), data = .)
+summary(fit)
+```
+
+```{r}
+ranef(fit)
+```
+
+## Faithfulness analysis
+
+
+```{r}
+df %>% 
+  filter(!sal %in% c("random", "lesion")) %>%
+  lmer(iAUC ~ ground_truth + (ground_truth | sal), data = .) %>% 
+  summary(.)
+```
+```{r}
+df %>% 
+  filter(sal == "random") %>%
+  t.test(iAUC ~ ground_truth, data = .)
+```
+
+```{r}
+pca_df %>%
+  group_by(saliency_method, ground_truth) %>% 
+   summarise(visual_randomness_mean = mean(perceptual_incoherence),
+             visual_randomness_sd = sd(perceptual_incoherence),
+             n = n(),
+             score_difference_mean = mean(semantic_overlap),
+             score_difference_sd = sd(semantic_overlap)) %>% 
+   mutate(visual_randomness_se = visual_randomness_sd / sqrt(n),
+          visual_randomness_lower_ci = visual_randomness_mean - qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+          visual_randomness_upper_ci = visual_randomness_mean + qt(1 - (0.05 / 2), n - 1) * visual_randomness_se,
+          score_difference_se = score_difference_sd / sqrt(n),
+          score_lower_ci = score_difference_mean - qt(1 - (0.05 / 2), n - 1) * score_difference_se,
+          score_upper_ci = score_difference_mean + qt(1 - (0.05 / 2), n - 1) * score_difference_se) %>% 
+   ungroup() %>% 
+   ggplot(aes(x = `score_difference_mean`, y = `visual_randomness_mean`, label = str_replace(saliency_method, "_", " "),
+              color = factor(ground_truth), shape = factor(ground_truth))) +
+   #geom_point(size = 2) +
+   geom_errorbar(aes(ymin = visual_randomness_lower_ci, ymax = visual_randomness_upper_ci, width = 0.04)) +
+   geom_errorbarh(aes(xmin = score_lower_ci, xmax = score_upper_ci, , height = 0.0025)) +
+   geom_text_repel(show_guide = F, color = "grey50", alpha = 50, size =3) +
+   scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+   scale_shape_manual(values = c(19, 15), labels =c("Benign", "Melanoma"), name = "") +
+   labs(x = "Semantic overlap (PCA)", y = "Perceptual incoherence (PCA)") +
+   theme_minimal() +
+   theme(legend.position = "none")
+  
+```
+# Compute which method dominates for which image
+
+```{r}
+library(ggbeeswarm)
+```
+
+```{r}
+rank_df <- df %>%  
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, visual_randomness, iAUC, ground_truth, score, fm) %>% 
+  pivot_wider(id_cols = c(image_id, sal, visual_randomness, iAUC, ground_truth), names_from = fm, values_from = score) %>% 
+  mutate(
+    sal = str_replace(sal, "_", " "),
+    sal = recode(sal, `integrated gradients` = "Integrated\ngradients",
+                 `kernel shap` = "Kernel\nSHAP",
+                 `rise` = "RISE",
+                 `occlusion` = "Occlusion",
+                 `grad cam` = "Grad\nCam",
+                 `a2` = "A2"),
+    saliency_method = factor(sal, levels = c("Integrated\ngradients", "Kernel\nSHAP", "RISE",
+                                                  "Occlusion", "Grad\nCam", "A2")
+                             )) %>%
+  rowwise() %>% 
+  mutate(mean_score = mean(c(Asymmetry_Mask, Border_Mask, Color_Mask), na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(image_id) %>% 
+  mutate(visual_randomness_rank = rank(desc(visual_randomness)),
+         iAUC_rank = rank(iAUC),
+         semantic_overlap_rank =  rank(mean_score),
+         rank_sum = visual_randomness_rank + iAUC_rank + semantic_overlap_rank,
+         rank_sum_interpretability = visual_randomness_rank + semantic_overlap_rank,
+         rank_sum_max = max(rank_sum),
+         iAUC_rank_max = max(iAUC_rank)) %>% 
+  ungroup()
+```
+
+```{r}
+rank_df %>%  head()
+```
+```{r}
+rank_df %>%
+  group_by(image_id) %>% 
+  filter(rank_sum==rank_sum_max) %>% 
+  group_by(saliency_method) %>% 
+  summarise(mean(rank_sum))
+```
+
+```{r}
+rank_df %>%  
+  group_by(saliency_method) %>% 
+  summarise(mean(rank_sum))
+```
+
+```{r}
+gradcam_rank <- rank_df %>% 
+  filter(saliency_method == "Grad\nCam") %>% 
+  rename("rank_sum_gradcam" = rank_sum_interpretability,
+         "iAUC_gradcam" = iAUC) %>% 
+  select(image_id, rank_sum_gradcam, iAUC_gradcam)
+```
+
+```{r}
+gradcam_rank %>% head()
+```
+
+
+```{r}
+left_join(rank_df, gradcam_rank, by = "image_id") %>%
+  filter((iAUC > iAUC_gradcam)) %>% 
+  mutate(rank_sum_difference = rank_sum_interpretability - rank_sum_gradcam) %>% 
+  arrange(desc(rank_sum_difference)) %>% 
+  select(image_id, ground_truth, sal, rank_sum_difference, rank_sum, rank_sum_gradcam, iAUC, iAUC_rank)
+```
+
+```{r}
+left_join(rank_df, occlusion_rank, by = "image_id") %>%
+  filter(image_id %in% c("test_377", "test_101", "test_24") &
+        sal %in% c("Grad\nCam", "A2", "Kernel\nSHAP", "Occlusion")) %>% 
+  mutate(rank_sum_difference = rank_sum_interpretability - rank_sum_occlusion) %>% 
+  select(image_id, ground_truth, sal, rank_sum_difference, rank_sum, rank_sum_occlusion, iAUC, iAUC_rank) %>% 
+  write_csv("../output/visualisation_candidates.csv")
+```
+
+```{r}
+left_join(rank_df, occlusion_rank, by = "image_id") %>%
+  filter(image_id %in% c("test_40") &
+        sal %in% c("A2", "Occlusion")) %>% 
+  mutate(rank_sum_difference = rank_sum_interpretability - rank_sum_occlusion) %>% 
+  select(image_id, ground_truth, sal, rank_sum_difference, rank_sum, rank_sum_occlusion, iAUC, iAUC_rank) %>% 
+  write_csv("../output/test40_a2_occlusion.csv")
+```
+
+```{r}
+left_join(rank_df, occlusion_rank, by = "image_id") %>%
+  filter(iAUC_rank == iAUC_rank_max &
+        ground_truth == 1) %>% 
+  mutate(rank_sum_difference = rank_sum_interpretability - rank_sum_occlusion) %>% 
+  arrange(desc(rank_sum_difference)) %>% 
+  select(image_id, ground_truth, sal, rank_sum_difference, rank_sum, rank_sum_occlusion) %>% 
+  filter(rank_sum_difference >= 5) %>% 
+  write_csv("../output/visualisation_candidates_high_faithfulness.csv")
+```
+
+```{r}
+left_join(rank_df, occlusion_rank, by = "image_id") %>% 
+  mutate(rank_sum_difference = rank_sum - rank_sum_occlusion) %>% 
+  arrange(desc(rank_sum_difference)) %>% 
+  select(image_id, sal, rank_sum_difference, rank_sum, rank_sum_occlusion) %>% 
+  filter(rank_sum_difference <= -11) %>% 
+  write_csv("../output/visualisation_candidates_low.csv")
+```
+
+```{r}
+rank_df  %>%  
+  filter(rank_sum == rank_sum_max) %>%
+  count(saliency_method) %>% 
+  mutate(prop = round(n/sum(n), 2))
+```
+```{r}
+rank_df  %>%  
+  filter(rank_sum == rank_sum_max &
+        saliency_method == "Grad\nCam") %>%
+  count(iAUC_rank) %>% 
+  mutate(prop = round(n/sum(n), 2))
+```
+```{r}
+gradcam_ids <- rank_df %>% 
+  filter(rank_sum == rank_sum_max &
+        saliency_method == "Grad\nCam") %>%
+  pull(image_id)
+```
+
+```{r}
+not_gradcam_top_rank <- rank_df %>% 
+  filter(image_id %in% gradcam_ids &
+           saliency_method != "Grad\nCam") %>%
+  group_by(image_id) %>% 
+  mutate(rank_sum_max = max(rank_sum)) %>% 
+  filter(rank_sum == rank_sum_max) %>% 
+  select(image_id, rank_sum) %>% 
+  distinct() %>% 
+  ungroup()
+gradcam_dict <- not_gradcam_top_rank$rank_sum
+names(gradcam_dict) <- not_gradcam_top_rank$image_id
+gradcam_dict
+```
+
+```{r}
+gradcam_rank_df <- rank_df %>% 
+  filter(saliency_method == "Grad\nCam") %>% 
+  mutate(gradcam_alternative_rank_sum = ifelse(image_id %in% gradcam_ids,
+                                                 unname(gradcam_dict[image_id]),
+                                                 rank_sum_max)) %>% 
+  select(image_id, saliency_method, rank_sum, gradcam_alternative_rank_sum)
+gradcam_rank_df
+```
+
+```{r}
+gradcam_rank_df %>% 
+  mutate(rank_sum_difference = gradcam_alternative_rank_sum - rank_sum) %>% 
+  ggplot(aes(rank_sum_difference)) +
+  geom_density(color = "black")
+```
+
+
+```{r}
+wilcox.test(gradcam_rank_df$rank_sum, gradcam_rank_df$gradcam_alternative_rank_sum, paired=TRUE) 
+```
+
+```{r}
+rank_df  %>%  
+  filter(rank_sum == rank_sum_max) %>%
+  mutate(saliency_method = recode(saliency_method, 
+    `A2` = 'Attention', `Integrated\ngradients` = 'IG',
+    `Kernel\nSHAP` = 'Kernel SHAP',
+    `Grad\nCam` = 'GradCam')) %>%
+  ggplot(aes(x=reorder(saliency_method, rank_sum), y = rank_sum, color = saliency_method)) +
+  geom_quasirandom(method='smiley',alpha=.5) +
+  scale_color_manual(values = met.brewer("Hokusai1", 8)[c(1, 2, 4, 6, 7, 8)]) +
+  labs(y = "Rank sum", x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+  ggsave(filename = "../output/adaptive_saliency_methods.pdf", width = 18, height = 5, unit = "cm")
+```
+
+```{r}
+rank_df %>%  
+  select(saliency_method, image_id, rank_sum, visual_randomness_rank, iAUC_rank, semantic_overlap_rank) %>% 
+  pivot_longer(c(visual_randomness_rank, iAUC_rank, semantic_overlap_rank), names_to = "metric", values_to = "rank") %>% 
+  ggplot(aes(x=reorder(saliency_method, rank_sum), y = rank, color = metric)) +
+  facet_wrap(~metric, labeller = labeller(metric = c("iAUC_rank" = "Faithfulness",
+                                                                 "semantic_overlap_rank" = "Semantic overlap",
+                                                                 "visual_randomness_rank" = "Perceptual incoherence")),
+             ncol=1) +
+  geom_quasirandom(method='smiley',alpha=.5) +
+  scale_color_manual(values = met.brewer("Hokusai1", 8)[c(1, 4, 8)]) +
+  labs(y = "Rank", x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+  ggsave(filename = "../output/adaptive_saliency_methods_by_rank.pdf", width = 18, height = 18, unit = "cm")
+```
+
+```{r}
+df %>%  
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, visual_randomness, iAUC, ground_truth, score, fm) %>% 
+  pivot_wider(id_cols = c(image_id, sal, visual_randomness, iAUC, ground_truth), names_from = fm, values_from = score) %>% 
+  mutate(saliency_method = factor(sal, levels = c("integrated_gradients", "kernel_shap", "rise",
+                                                  "occlusion", "grad_cam", "a2"))) %>%
+  rowwise() %>% 
+  mutate(mean_score = mean(c(Asymmetry_Mask, Border_Mask, Color_Mask), na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(image_id) %>% 
+  mutate(visual_randomness_rank = rank(visual_randomness),
+         iAUC_rank = rank(desc(iAUC)),
+         semantic_overlap_rank =  rank(desc(mean_score)),
+         rank_sum = visual_randomness_rank + iAUC_rank + semantic_overlap_rank,
+         rank_sum_min = min(rank_sum)) %>%
+  filter(rank_sum == rank_sum_min) %>% 
+  ungroup() %>% 
+  ggplot(aes(x=saliency_method, y = rank_sum, color = saliency_method)) +
+  geom_quasirandom(method='smiley',alpha=.5) +
+  facet_grid(rows = vars(factor(ground_truth)), labeller = labeller(`factor(ground_truth)` =
+            c("0" = "Benign", "1" = "Melanoma"))) +
+  scale_color_manual(values = met.brewer("Hokusai1", 8)[c(1, 2, 4, 6, 7, 8)]) +
+  labs(y = "Rank sum", x = "") +
+  theme_minimal() +
+  theme(legend.position = "none")
+  ggsave(filename = "../output/adaptive_saliency_methods_ground_truth.pdf", width = 18, height = 10, unit = "cm")
+```
+
+## Feature analysis
+```{r}
+df %>% colnames()
+```
+
+```{r}
+df %>% 
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, fm, score) %>% 
+  pivot_wider(id_cols = c(image_id, sal), names_from = fm, values_from = score) %>% 
+  filter(!is.na(Color_Mask)) %>% 
+  select(Asymmetry_Mask, Border_Mask, Color_Mask) %>% 
+  cor()
+```
+```{r}
+temp <- df %>% 
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, fm, score) %>% 
+  pivot_wider(id_cols = c(image_id, sal), names_from = fm, values_from = score) %>% 
+  filter(!is.na(Color_Mask) &
+           sal == "integrated_gradients") %>% 
+  mutate(mean_AB = (Asymmetry_Mask + Border_Mask)/2) %>% 
+  ungroup()
+
+t.test(x = temp$Color_Mask, y = temp$mean_AB, alternative = "two.sided", paired = T)
+```
+```{r}
+temp <- df %>% 
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, fm, score) %>% 
+  pivot_wider(id_cols = c(image_id, sal), names_from = fm, values_from = score) %>% 
+  filter(!is.na(Color_Mask) &
+           sal == "kernel_shap") %>% 
+  mutate(mean_AB = (Asymmetry_Mask + Border_Mask)/2) %>% 
+  ungroup()
+
+t.test(x = temp$Color_Mask, y = temp$mean_AB, alternative = "two.sided", paired = T)
+```
+```{r}
+temp <- df %>%
+  filter(!sal %in% c("random", "lesion")) %>%
+  select(image_id, sal, fm, score) %>% 
+  pivot_wider(id_cols = c(image_id, sal), names_from = fm, values_from = score) %>% 
+  filter(!is.na(Color_Mask) &
+           sal == "a2") %>% 
+  mutate(mean_AB = (Asymmetry_Mask + Border_Mask)/2) %>% 
+  ungroup()
+
+t.test(x = temp$Color_Mask, y = temp$mean_AB, alternative = "two.sided", paired = T)
+```
+## Faithfulness analysis
+
+```{r}
+df %>% colnames()
+```
+
+
+```{r}
+df %>% 
+  filter(!sal %in% c("random", "lesion")) %>%
+  lmer(iAUC ~ ground_truth + (ground_truth | sal), data = .) %>% 
+  summary(.)
+```
+

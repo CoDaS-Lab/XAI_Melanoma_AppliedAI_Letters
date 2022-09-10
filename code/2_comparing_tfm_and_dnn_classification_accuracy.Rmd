@@ -1,0 +1,380 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load tidyverse 
+
+```{r}
+library(corrr)
+```
+
+
+```{r}
+library(tidyverse)
+```
+```{r}
+library(readxl)
+```
+
+```{r}
+library(tidyjson)
+```
+```{r}
+library(feather)
+```
+
+```{r}
+library(ggExtra)
+```
+
+```{r}
+library(cowplot)
+```
+
+```{r}
+library(arrow)
+```
+
+```{r}
+library(MetBrewer)
+```
+
+
+# Load data
+
+```{r}
+df <- arrow::read_feather("../data/features_combined_20220201.feather")
+```
+
+```{r}
+df %>% head()
+```
+
+
+# Explore data
+
+### Check if scores and tfm classification NaNs align
+
+```{r}
+df %>% 
+  mutate(empty_border = is.na(Border_Scores),
+         empty_asymmetry = is.na(Asymmetry_Scores),
+         empty_tfm = is.na(TFM_predictions),
+         empty_match = empty_tfm == (empty_border | empty_asymmetry)) %>% 
+  count(empty_match)
+```
+```{r}
+df %>% 
+  mutate(empty_border = is.na(Border_Scores),
+         empty_asymmetry = is.na(Asymmetry_Scores),
+         empty_tfm = is.na(TFM_predictions),
+         empty_match = empty_tfm == (empty_border | empty_asymmetry)) %>% 
+  filter(!empty_match)
+```
+```{r}
+df %>% 
+  mutate(empty_tfm = is.na(TFM_predictions)) %>% 
+  count(empty_tfm)
+```
+```{r}
+df %>% 
+  mutate(empty_tfm = is.na(TFM_probability_melanoma)) %>% 
+  count(empty_tfm)
+```
+
+```{r}
+df %>% 
+  mutate(empty_border = is.na(Border_Scores),
+         empty_asymmetry = is.na(Asymmetry_Scores),
+         empty_tfm = is.na(TFM_probability_melanoma),
+         empty_match = empty_tfm == (empty_border | empty_asymmetry)) %>% 
+  count(empty_match)
+```
+```{r}
+df %>% colnames()
+```
+
+# Analyse data
+
+```{r}
+df %>% 
+  count(observation_type)
+```
+
+
+## Create a predictive performance variable that captures the difference between model predictions and true classifications (square error of the probabilities)
+```{r}
+null_prediction <- df %>% 
+  filter(observation_type == "train") %>% 
+  pull(ground_truth) %>% 
+  mean(na.rm = T)
+```
+
+
+```{r}
+df <- df %>% 
+  mutate(E2_TFM = (TFM_probability_melanoma - ground_truth)**2,
+         E2_DNN = (DNN_probability_melanoma - ground_truth)**2,
+         E2_baseline = (0.5 - ground_truth)**2)
+```
+
+```{r}
+df %>% 
+  filter(observation_type == "test") %>% 
+  mutate(acc_TFM = round(TFM_probability_melanoma) == ground_truth,
+         acc_DNN = round(DNN_probability_melanoma) == ground_truth) %>% 
+  summarise(mean(acc_TFM, na.rm = T), mean(acc_DNN))
+```
+
+
+```{r}
+df <- df %>% 
+  filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores) &
+        border_ratio > 0.5)
+```
+```{r}
+library(ggbeeswarm)
+```
+
+```{r}
+baseline_value <- df %>% 
+  filter(observation_type == "test") %>% 
+  summarise(mean(E2_baseline)) %>% 
+  pull()
+baseline_value
+```
+```{r}
+ df %>% 
+  filter(observation_type == "test") %>% 
+  summarise(mean(E2_DNN)) %>% 
+  pull()
+```
+```{r}
+ df %>% 
+  filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  summarise(mean(E2_TFM, na.rm = T)) %>% 
+  pull()
+```
+
+```{r}
+squared_error_comparison <- df %>%  
+  filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  select(image_id, E2_TFM, E2_DNN) %>% 
+  pivot_longer(cols = -image_id, names_to = "Model", values_to = "E2") %>%
+  #group_by(Model) %>% 
+  #summarise(mean(E2))
+  ggplot(aes(y = E2, x = Model)) +
+    stat_summary(fun.data = "mean_cl_normal", color = "black") +
+    geom_hline(yintercept=baseline_value, , size =1.2, color = "gray40", linetype ="longdash") +
+  coord_cartesian(ylim = c(0, 0.26))  +
+  ylab("Squared error") +
+  scale_x_discrete(labels = c("DNN", "TFM")) +
+  theme_minimal()
+squared_error_comparison
+```
+
+
+### Figure 2 two versions
+
+```{r}
+e2_scatter <- df %>% 
+    filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = E2_TFM, y = E2_DNN, color = factor(ground_truth), shape = factor(ground_truth))) +
+  geom_point(alpha = 0.5, size = 2) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma absent", "Melanoma present"), name = "") +
+  scale_shape_manual(values = c(19, 15), labels =c("Melanoma absent", "Melanoma present"), name = "") +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  labs(x = "TFM Squared error", y = "DNN squared error") +
+  theme_minimal() +
+  theme(legend.position = c(0.8, 1.15))
+e2_scatter
+```
+
+```{r}
+hist_dist_e2_tfm <- df %>% 
+        filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = E2_TFM, fill = factor(ground_truth))) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  scale_shape_manual(values = c(19, 15), labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  geom_histogram(alpha = 0.5, bins = 20) +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "", guide = "none") +
+  xlim(0, 1) +
+  ylim(0, 55) +
+  labs(x = "", y = "") +
+  theme_minimal() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_blank(),
+        axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+hist_dist_e2_tfm
+```
+
+```{r}
+hist_dist_e2_dnn <- df %>% 
+          filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = E2_DNN, fill = factor(ground_truth))) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  geom_histogram(alpha = 0.5, bins = 20) +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "", guide = "none") +
+  xlim(0, 1) +
+  ylim(0, 55) +
+  labs(x = "", y = "") +
+  theme_minimal() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_blank(),
+        axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank()) +
+  coord_flip()
+```
+
+```{r}
+hist_dist_e2_dnn
+```
+
+```{r}
+combined_plot_1 <- insert_xaxis_grob(e2_scatter, hist_dist_e2_tfm, position = "top")
+combined_plot_2 <- insert_yaxis_grob(combined_plot_1, hist_dist_e2_dnn, position = "right")
+ggsave(plot = combined_plot_2, filename = "../output/Fig2_Squared_Error.pdf", width = 10, height = 10, units = "cm")
+```
+```{r}
+prob_scatter <- df %>% 
+    filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = TFM_probability_melanoma, y = DNN_probability_melanoma, color = factor(ground_truth), shape = factor(ground_truth))) +
+  geom_point(alpha = 0.5, size = 2) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Benign", "Melanoma"), name = "") +
+  scale_shape_manual(values = c(19, 15), labels =c("Benign", "Melanoma"), name = "") +
+  xlim(0, 1) +
+  ylim(0, 1) +
+  labs(x = "TFM probability malign", y = "DNN probability malign") +
+  theme_minimal() +
+  theme(legend.position = c(0.97, 1.18))
+prob_scatter
+```
+
+```{r}
+hist_dist_prob_tfm <- df %>% 
+        filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = TFM_probability_melanoma, fill = factor(ground_truth))) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  scale_shape_manual(values = c(19, 15), labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  geom_histogram(alpha = 0.5, bins = 20) +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "", guide = "none") +
+  xlim(0, 1) +
+  ylim(0, 55) +
+  labs(x = "", y = "") +
+  theme_minimal() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_blank(),
+        axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank())
+hist_dist_prob_tfm
+```
+
+```{r}
+hist_dist_prob_dnn <- df %>% 
+          filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  ggplot(aes(x = DNN_probability_melanoma, fill = factor(ground_truth))) +
+  scale_color_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "") +
+  geom_histogram(alpha = 0.5, bins = 20) +
+  scale_fill_manual(values = met.brewer("Troy", 8)[c(7, 4)], labels =c("Melanoma benign", "Melanoma malign"), name = "", guide = "none") +
+  xlim(0, 1) +
+  ylim(0, 55) +
+  labs(x = "", y = "") +
+  theme_minimal() +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_blank(),
+        axis.title=element_blank(), axis.text=element_blank(), axis.ticks=element_blank()) +
+  coord_flip()
+```
+
+```{r}
+hist_dist_prob_dnn
+```
+
+```{r}
+combined_plot_1 <- insert_xaxis_grob(prob_scatter, hist_dist_prob_tfm, position = "top")
+combined_plot_2 <- insert_yaxis_grob(combined_plot_1, hist_dist_prob_dnn, position = "right")
+```
+# Save figure 2
+
+```{r}
+fig2 <- plot_grid(squared_error_comparison, combined_plot_2, labels = "AUTO", rel_widths = c(1, 2))
+```
+```{r}
+ggsave("../output/Fig2_tfm_vs_dnn.pdf", plot = fig2, width = 13, height = 8, units = "cm")
+```
+
+# Statistical analysis
+
+## Log likelihood ratios
+
+```{r}
+bernoulli_likelihood = function(f,x){ f^x*(1-f)^(1-x) }
+```
+
+```{r}
+(likelihood_table <- df %>%  
+  filter(observation_type == "test" &
+        !is.na(Asymmetry_Scores) &
+        !is.na(Border_Scores)) %>% 
+  mutate(likelihood_null = bernoulli_likelihood(0.5, ground_truth),
+         likelihood_TFM = bernoulli_likelihood(TFM_probability_melanoma, ground_truth),
+         likelihod_DNN = bernoulli_likelihood(DNN_probability_melanoma, ground_truth)) %>% 
+  summarise(null = prod(likelihood_null),
+            TFM = prod(likelihood_TFM),
+            DNN = prod(likelihod_DNN)) %>% 
+  pivot_longer(c(null, TFM, DNN), names_to = "model", values_to = "likelihood") %>% 
+  mutate(log_likelihood = log(likelihood)))
+```
+```{r}
+null_log_likelihood <- likelihood_table %>% filter(model == "null") %>% pull(log_likelihood)
+tfm_log_likelihood <- likelihood_table %>% filter(model == "TFM") %>% pull(log_likelihood)
+dnn_log_likelihood <- likelihood_table %>% filter(model == "DNN") %>% pull(log_likelihood)
+```
+
+
+```{r}
+round(tfm_log_likelihood - null_log_likelihood, 2)	
+```
+
+### See how to compute a p-value from a log-likelihood ratio using the chi-squared distribution: https://www.statisticshowto.com/likelihood-ratio-tests/
+
+
+
+```{r}
+pchisq(-2*(null_log_likelihood - tfm_log_likelihood), df = 4, lower.tail = FALSE)
+```
+```{r}
+-2*(tfm_log_likelihood - null_log_likelihood)
+```
+
+
+```{r}
+round(dnn_log_likelihood - tfm_log_likelihood, 2)	
+```
+```{r}
+round(dnn_log_likelihood - null_log_likelihood, 2)	
+```
+
+
+```{r}
+cor.test(~ TFM_probability_melanoma + DNN_probability_melanoma, data = df)
+```
+
